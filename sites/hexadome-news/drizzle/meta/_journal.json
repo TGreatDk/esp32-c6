@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793475542367,
+      "tag": "0000_tranquil_pride",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793475728638,
+      "tag": "0001_fantastic_sally_floyd",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793476587464,
+      "tag": "0002_busy_thunderball",
+      "breakpoints": true
+    }
+  ]
+}
