@@ -15,7 +15,7 @@ struct HeadlineFeed {
 
 QueueHandle_t feedQueue;
 HeadlineFeed currentFeed;
-bool extraModesEnabled = false;
+bool networkEnabled = false;
 class FeedBuffer : public Stream {
  public:
   String body;

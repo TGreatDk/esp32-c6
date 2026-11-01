@@ -66,7 +66,7 @@ export default function Initiative() {
       <InitiativePreview current={current} next={next} />
       <div className="turn-control"><button className="next-button" disabled={!connected || busy || !current || dirty} onClick={() => send("next")}>Next turn →</button><p>{dirty ? "Save your edited order before advancing." : "The ESP32 advances the turn and loops the order. Works with BOOT when unplugged."}</p></div></section>
       {order.names.length > 0 && <ol className="turn-list">{order.names.map((name, index) => <li key={index}><button disabled={!connected || busy || dirty} onClick={() => send("select", index)} aria-current={index === order.current ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{name}{index === order.current && <strong>NOW</strong>}</button></li>)}</ol>}
-      <p className="caption">Tap BOOT for the next turn; double-click for your painted image.<br />Hold to flip the display. While connected, click a saved name to select it.</p>
+      <p className="caption">Tap BOOT for the next turn; double-click for screens, click to browse, then wait 5 seconds.<br />Hold to flip the display. While connected, click a saved name to select it.</p>
     </aside></div><footer>TABLETOP COMPANION <span>YOUR PARTY. YOUR TURN ORDER.</span></footer>
   </main>;
 }

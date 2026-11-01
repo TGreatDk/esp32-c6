@@ -64,7 +64,7 @@ export default function Paint() {
     setBusy(true); setError(false); setProgress(0);
     try {
       await client.current!.sendArt(pixels.current!, (value: number) => setProgress(value)); setDirty(false);
-      setMessage("Image saved on the ESP32 and displayed. Double-click BOOT to return to your previous screen.");
+      setMessage("Image saved on the ESP32 and displayed. Double-click BOOT to choose another screen.");
     } catch (e) { setError(true); setMessage(e instanceof Error ? e.message : "Upload failed. Your previous saved image is kept."); }
     finally { setBusy(false); setProgress(null); }
   }
@@ -111,7 +111,7 @@ export default function Paint() {
         <button className="save-art" disabled={busy || !connected} onClick={save}>{progress !== null ? `Saving ${progress}%` : "Save image to ESP32 ↗"}</button>
         {!supported && <p className="error">USB configuration needs desktop Chrome or Edge.</p>}
         <p className={error ? "feedback error" : "feedback"} role={error ? "alert" : "status"}>{message}</p>
-      </div></section><p className="caption">Double-click BOOT to toggle this image.<br />Hold BOOT to flip the whole display. Initiative stays saved.</p></aside></div>
+      </div></section><p className="caption">Double-click BOOT for screens; click to browse and wait 5 seconds to open.<br />Hold BOOT to flip the whole display. Initiative stays saved.</p></aside></div>
     <footer>TABLETOP COMPANION <span>55,040 PIXELS. ONE LITTLE DISPLAY.</span></footer>
   </main>;
 }

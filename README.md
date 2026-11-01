@@ -15,7 +15,7 @@ order, current turn, validation, animation, and persistent storage.
 
 The page is a USB control panel. It does not fetch or save initiative through a
 web API. Player configuration and current turn live in the ESP32's flash, and
-normal D&D mode turns Wi-Fi off. Internet may be needed to initially load the
+startup leaves Wi-Fi off until Clock or News is selected. Internet may be needed to initially load the
 page; initiative gameplay does not need it. Close Arduino Serial Monitor or any
 other application using the serial port before connecting the browser.
 
@@ -26,7 +26,9 @@ it to select that entry. Physical BOOT presses update the connected preview too.
 ## Board controls
 
 - Short BOOT press: advance to the next combatant, wrapping after the last.
-- Double-click BOOT: toggle the saved pixel image and return to the previous screen.
+- Double-click BOOT: open the screen selector. Click once to move down and wrap
+  to the top. Leave a choice selected for five seconds to open it.
+  Screens: Clock, Aristeia! News, Pixel Art, Initiative, and animated Eyes.
   Single clicks wait about 350 ms so a double-click does not also advance initiative.
 - Hold BOOT for one second: rotate the whole display 180 degrees without advancing.
 - The current name uses the upper 60% of the screen; the next name uses the lower
@@ -35,11 +37,9 @@ it to select that entry. Physical BOOT presses update the connected preview too.
   A failed save leaves the previous order intact and shows a small amber dot.
 - The saved list and current turn return after power loss. Orientation resets.
 
-Clock and Aristeia! news code remain behind a startup unlock. Hold BOOT for at
-least 300 ms as the screen lights up, within its 1.8-second startup window, then
-release. Short presses then cycle clock, news, pixel art, and initiative for that run.
-Holding BOOT before power-on or during reset can enter the chip's flashing mode.
-Only this unlocked mode starts Wi-Fi, NTP, and the optional news download.
+The board starts in Initiative. Clock and News enable Wi-Fi for the rest of that run when selected.
+Initiative, artwork, and blinking eyes need no network.
+Holding BOOT before power-on or during reset can enter the flashing mode.
 
 ## Pixel painter
 
@@ -59,7 +59,7 @@ same USB connection as initiative, with an acknowledgement after every 512-byte
 chunk. The board validates the complete 110,080-byte RGB565 image and its CRC32,
 then atomically replaces the saved file. An interrupted or corrupt upload keeps
 the previous image. The saved image uses the full display and is shown after
-upload; double-click BOOT to leave it or open it again. Initiative remains intact.
+upload; double-click BOOT to choose another screen. Initiative remains intact.
 
 Artwork is stored in the board's LittleFS flash partition separately from the
 initiative order. The unused filesystem is initialized once on first use; later

@@ -13,12 +13,15 @@
 #include "name_layout.h"
 #include "boot_button.h"
 #include "pixel_art.h"
+#include "screen_selector.h"
+#include "eyes.h"
 
 constexpr char TIMEZONE[] = "CET-1CEST,M3.5.0,M10.5.0/3";
 constexpr uint16_t BACKGROUND = 0x0000;
 constexpr uint16_t FOREGROUND = 0xFFFF;
 uint8_t screenMode = 2;
-uint8_t artReturnMode = 2;
+ScreenSelector selector;
+EyesMotion eyes;
 bool storageHealthy = true;
 
 // ESP32-C6-LCD-1.47 pinout: DC, CS, SCK, MOSI.
@@ -117,12 +120,12 @@ bool applyLocalInitiative(InitiativeState next) {
   next.revision = currentInitiative.revision + 1;
   storageHealthy = saveInitiative(next);
   if (!storageHealthy) {
-    if (screenMode == 2) { drawInitiative(); present(false); }
+    if (screenMode == 2 && !selector.active) { drawInitiative(); present(false); }
     return false;
   }
   const InitiativeState previous = currentInitiative;
   currentInitiative = next;
-  if (screenMode == 2) scrollInitiative(previous);
+  if (screenMode == 2 && !selector.active) scrollInitiative(previous);
   return true;
 }
 
@@ -167,7 +170,7 @@ void handleSerial() {
           else {
             const bool saved = artReceived == ART_BYTES;
             if (saved) {
-              if (screenMode != 3) artReturnMode = screenMode;
+              selector.active = false;
               screenMode = 3; drawArt(); present(false);
             }
             replyArt(requestId, artReceived, saved, artExpectedCrc);
@@ -251,7 +254,50 @@ void drawClock() {
   display.print(WiFi.status() == WL_CONNECTED ? "Wi-Fi connected" : "Wi-Fi offline - retrying");
 }
 
+void drawEyes() {
+  display.fillScreen(BACKGROUND);
+  const int h = eyes.height;
+  for (int center : {90, 230}) {
+    display.fillRoundRect(center - 53, 86 - h / 2, 106, h, min(24, h / 2), 0x07FF);
+    if (h > 12) {
+      const int radiusY = min(20, (h - 8) / 2);
+      const int pupilY = constrain(86 + int(eyes.y), 86 - h / 2 + radiusY + 3, 86 + h / 2 - radiusY - 3);
+      display.fillEllipse(center + int(eyes.x), pupilY, 17, radiusY, BACKGROUND);
+      if (h > 45) display.fillCircle(center + int(eyes.x) - 5, pupilY - 6, 3, FOREGROUND);
+    }
+  }
+}
+
+void drawSelector(uint32_t now) {
+  display.fillScreen(BACKGROUND);
+  display.setTextSize(1); display.setTextColor(FOREGROUND);
+  display.setCursor(12, 8); display.print("SELECT SCREEN");
+  display.setCursor(260, 8); display.printf("%lus", (unsigned long)((5000 - min(uint32_t(5000), now - selector.changedAt) + 999) / 1000));
+  for (uint8_t i = 0; i < SCREEN_COUNT; ++i) {
+    const int y = 26 + i * 25;
+    const bool selected = i == selector.choice;
+    if (selected) display.fillRoundRect(8, y, 304, 23, 4, 0xEE0F);
+    display.setTextColor(selected ? BACKGROUND : FOREGROUND);
+    display.setTextSize(2); display.setCursor(16, y + 4); display.print(SCREEN_NAMES[i]);
+  }
+  display.setTextSize(1); display.setTextColor(FOREGROUND);
+  display.setCursor(12, 156); display.print("Click: next     Wait 5s: open");
+  display.fillRect(0, 169, 320 * min(uint32_t(5000), now - selector.changedAt) / 5000, 3, 0x07FF);
+}
+
+void startNetwork() {
+  if (networkEnabled) return;
+  networkEnabled = true;
+  WiFi.persistent(false); WiFi.mode(WIFI_STA); WiFi.setAutoReconnect(true);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  configTzTime(TIMEZONE, "pool.ntp.org", "time.cloudflare.com");
+  feedQueue = xQueueCreate(1, sizeof(HeadlineFeed));
+  if (!feedQueue || xTaskCreate(downloadFeed, "news", 12288, nullptr, 1, nullptr) != pdPASS)
+    Serial.println("News downloader initialization failed");
+}
+
 void drawMode(uint8_t mode) {
+  if (mode == 4) { eyes.reset(millis()); drawEyes(); return; }
   if (mode == 3) { drawArt(); return; }
   if (mode == 2) { drawInitiative(); return; }
   const bool news = mode == 1;
@@ -269,7 +315,7 @@ void drawMode(uint8_t mode) {
   if (!news) {
     display.setTextSize(1);
     display.setCursor(16, 158);
-    display.print("BOOT: news | hold: flip");
+    display.print("2x BOOT: screens | hold: flip");
     drawClock();
   }
   display.setTextColor(FOREGROUND, BACKGROUND);
@@ -296,6 +342,8 @@ void setup() {
   checkInitiative();
   checkNameLayout();
   checkArt();
+  checkSelector();
+  checkEyes();
   storageHealthy = loadInitiative();
   Serial.println(storageHealthy ? "Local initiative loaded" : "Local initiative storage needs attention");
   currentFeed.count = HEADLINE_COUNT;
@@ -325,33 +373,8 @@ void setup() {
   }
   drawMode(2);
   present(false);
-  const uint32_t startup = millis();
-  uint32_t heldSince = 0;
-  // ROM samples BOOT first; this window starts after the screen lights up.
-  while (millis() - startup < 1800) {
-    if (digitalRead(BOOT_PIN) == LOW) {
-      if (!heldSince) heldSince = millis();
-      if (millis() - heldSince >= 300) { extraModesEnabled = true; break; }
-    } else heldSince = 0;
-    delay(5);
-  }
-  if (extraModesEnabled) { screenMode = 0; drawMode(0); present(false); }
-  while (digitalRead(BOOT_PIN) == LOW) delay(5);
-  Serial.println(extraModesEnabled ? "Startup profile: all screens" : "Startup profile: D&D only");
-  if (extraModesEnabled) {
-    WiFi.persistent(false);
-    WiFi.mode(WIFI_STA);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    configTzTime(TIMEZONE, "pool.ntp.org", "time.cloudflare.com");
-    feedQueue = xQueueCreate(1, sizeof(HeadlineFeed));
-    if (!feedQueue || xTaskCreate(downloadFeed, "news", 12288, nullptr, 1, nullptr) != pdPASS) {
-      Serial.println("News downloader initialization failed");
-      while (true) delay(1000);
-    }
-  } else {
-    WiFi.mode(WIFI_OFF);
-  }
+  WiFi.mode(WIFI_OFF);
+  Serial.println("Startup: initiative; double-click BOOT for screens");
   replySerialState(0);
 }
 
@@ -364,36 +387,37 @@ void loop() {
   static float tickerX = 320;
   static uint32_t lastFrame = 0;
   handleSerial();
-  const uint32_t nowMs = millis();
+  uint32_t nowMs = millis();
   const BootButton::Event event = button.update(digitalRead(BOOT_PIN) == LOW, nowMs);
   if (event == BootButton::DoubleClick) {
-    if (screenMode == 3) screenMode = artReturnMode;
-    else { artReturnMode = screenMode; screenMode = 3; }
-    drawMode(screenMode); present(true);
-    lastSecond = -1; tickerX = display.width(); lastFrame = nowMs;
-    Serial.println(screenMode == 3 ? "Mode: pixel art" : "Mode: returned from pixel art");
-  } else if (event == BootButton::Click && !extraModesEnabled) {
-    if (screenMode != 2) return;
-    if (currentInitiative.count) {
+    selector.open(screenMode, nowMs);
+  } else if (event == BootButton::Hold) {
+    flipped = !flipped; panel.setRotation(flipped ? 3 : 1);
+    if (selector.active) selector.changedAt = nowMs;
+    else { drawMode(screenMode); present(false); nowMs = millis(); }
+  } else if (event == BootButton::Click) {
+    if (selector.active) selector.next(nowMs);
+    else if (screenMode == 2 && currentInitiative.count) {
       InitiativeState next = currentInitiative;
       next.current = (next.current + 1) % next.count;
       if (applyLocalInitiative(next)) replySerialState(0);
       else replySerialError(0, "Could not save turn");
-    } else replySerialError(0, "Configure players first");
-  } else if (event != BootButton::None) {
-    if (event == BootButton::Hold) {
-      flipped = !flipped;
-      panel.setRotation(flipped ? 3 : 1);
-      Serial.println(flipped ? "Orientation: flipped 180 degrees" : "Orientation: normal");
-    } else {
-      screenMode = screenMode == 0 ? 1 : screenMode == 1 ? 3 : screenMode == 3 ? 2 : 0;
     }
-    drawMode(screenMode);
-    present(true);
-    lastSecond = -1;
-    tickerX = display.width();
-    lastFrame = nowMs;
-    Serial.println(screenMode == 3 ? "Mode: pixel art" : screenMode == 2 ? "Mode: D&D initiative" : screenMode == 1 ? "Mode: Aristeia! news" : "Mode: clock");
+  }
+  if (selector.active) {
+    if (selector.ready(nowMs) && !button.previous && !button.stable && !button.waiting) {
+      screenMode = selector.mode(); selector.active = false;
+      if (screenMode <= 1) startNetwork();
+      drawMode(screenMode); present(true);
+      lastSecond = -1; tickerX = display.width(); lastFrame = millis(); nowMs = lastFrame;
+      Serial.printf("Screen selected: %s\n", SCREEN_NAMES[selector.choice]);
+    } else {
+      static uint32_t menuFrame = 0;
+      if (event != BootButton::None || nowMs - menuFrame >= 100) {
+        drawSelector(nowMs); present(false); menuFrame = nowMs;
+      }
+      delay(5); return;
+    }
   }
 
   HeadlineFeed incoming;
@@ -407,9 +431,14 @@ void loop() {
       ticker.setTextColor(currentFeed.color, BACKGROUND);
     }
   }
-  if (extraModesEnabled && WiFi.status() != WL_CONNECTED && nowMs - lastRetry >= 30000) {
+  if (networkEnabled && WiFi.status() != WL_CONNECTED && nowMs - lastRetry >= 30000) {
     lastRetry = nowMs;
     WiFi.reconnect();
+  }
+
+  if (screenMode == 4) {
+    if (eyes.tick(nowMs)) { drawEyes(); present(false); }
+    delay(5); return;
   }
 
   if (screenMode == 2 || screenMode == 3) {
