@@ -52,7 +52,7 @@ export default function Initiative() {
     finally { setBusy(false); }
   }
   return <main className="initiative">
-    <header><a className="brand" href="/initiative"><span className="hex">D</span> D&D <span className="brand-light">/ INITIATIVE</span></a><nav className="mode-nav"><a href="/">News</a><a href="/paint">Paint</a><a href="/initiative" aria-current="page">Initiative</a></nav></header>
+    <header><a className="brand" href="/initiative"><span className="hex">D</span> D&D <span className="brand-light">/ INITIATIVE</span></a><nav className="mode-nav"><a href="/">News</a><a href="/paint">Paint</a><a href="/initiative" aria-current="page">Initiative</a><a href="/remote">Remote</a><a href="/remote">Remote</a></nav></header>
     <section className="intro"><div className="eyebrow"><span className="dot" /> THE GAME MASTER'S DESK</div><h1>Every hero gets<br /><em>their moment.</em></h1><p>Connect by USB. Set the order.<br />Unplug and play entirely on the board.</p></section>
     <div className="workspace"><section className="panel editor">
       <div className="panel-top"><h2>Turn order</h2><span className="status">{connected ? "USB CONNECTED" : "USB DISCONNECTED"}</span></div>

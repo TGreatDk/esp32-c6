@@ -90,7 +90,7 @@ export default function Paint() {
     finally { image?.close(); setBusy(false); }
   }
   return <main className="painter">
-    <header><a className="brand" href="/paint"><span className="hex">P</span> PIXEL <span className="brand-light">/ PAINTER</span></a><nav className="mode-nav"><a href="/">News</a><a href="/paint" aria-current="page">Paint</a><a href="/initiative">Initiative</a></nav></header>
+    <header><a className="brand" href="/paint"><span className="hex">P</span> PIXEL <span className="brand-light">/ PAINTER</span></a><nav className="mode-nav"><a href="/">News</a><a href="/paint" aria-current="page">Paint</a><a href="/initiative">Initiative</a><a href="/remote">Remote</a><a href="/remote">Remote</a></nav></header>
     <section className="intro"><div className="eyebrow"><span className="dot" /> EVERY PIXEL IS YOURS</div><h1>Your image.<br /><em>A little screen.</em></h1><p>Load an image or paint from scratch.<br />Convert to 320 × 172. Save over USB.</p></section>
     <div className="workspace"><section className="panel">
       <div className="panel-top"><h2>320 × 172 pixels</h2><span className="status">{dirty ? "LOCAL DRAFT" : "CANVAS"}</span></div>

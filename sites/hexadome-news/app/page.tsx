@@ -37,7 +37,7 @@ export default function Home() {
     finally { setBusy(false); }
   }
   return <main>
-    <header><a className="brand" href="/"><span className="hex">H</span> HEXADOME <span className="brand-light">/ NEWS</span></a><nav className="mode-nav"><a href="/" aria-current="page">News</a><a href="/paint">Paint</a><a href="/initiative">Initiative</a></nav></header>
+    <header><a className="brand" href="/"><span className="hex">H</span> HEXADOME <span className="brand-light">/ NEWS</span></a><nav className="mode-nav"><a href="/" aria-current="page">News</a><a href="/paint">Paint</a><a href="/initiative">Initiative</a><a href="/remote">Remote</a><a href="/remote">Remote</a></nav></header>
     <section className="intro"><div className="eyebrow"><span className="dot" /> ARISTEIA! // SPORTS NETWORK</div><h1>The arena never<br /><em>stops talking.</em></h1><p>Write the headlines. Set the scene.<br />Bring the HexaDome to your gaming table.</p></section>
     <div className="workspace"><section className="editor panel" aria-labelledby="editor-title">
       <div className="panel-top"><h2 id="editor-title">Broadcast queue</h2><span className={dirty ? "status draft" : "status"}>{dirty ? "UNPUBLISHED CHANGES" : "SAVED FEED"}</span></div>

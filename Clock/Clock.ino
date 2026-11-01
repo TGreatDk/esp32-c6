@@ -15,6 +15,7 @@
 #include "pixel_art.h"
 #include "screen_selector.h"
 #include "eyes.h"
+#include "bluetooth_remote.h"
 
 constexpr char TIMEZONE[] = "CET-1CEST,M3.5.0,M10.5.0/3";
 constexpr uint16_t BACKGROUND = 0x0000;
@@ -23,6 +24,8 @@ uint8_t screenMode = 2;
 ScreenSelector selector;
 EyesMotion eyes;
 bool storageHealthy = true;
+bool flipped = false;
+bool remoteScreenChanged = false;
 
 // ESP32-C6-LCD-1.47 pinout: DC, CS, SCK, MOSI.
 Arduino_HWSPI bus(15, 14, 7, 6);
@@ -321,6 +324,42 @@ void drawMode(uint8_t mode) {
   display.setTextColor(FOREGROUND, BACKGROUND);
 }
 
+void handleRemote() {
+  updateRemoteAdvertising(millis());
+  if (remoteResetUpload.exchange(false)) remoteUpload.clear();
+  RemoteCommand command;
+  if (!remoteQueue || xQueueReceive(remoteQueue, &command, 0) != pdPASS) return;
+  unsigned error = 0;
+  if (command.action == 'B') remoteUpload.begin(command.mode, millis());
+  else if (command.action == 'D') {
+    if (!remoteUpload.append(command.data, millis())) error = 3;
+  } else if (command.action == 'C') {
+    InitiativeState next;
+    if (!remoteUpload.complete(millis()) || !parseInitiative(remoteUpload.body, next) || !next.count) error = 3;
+    else if (applyLocalInitiative(next)) replySerialState(0); else error = 2;
+    remoteUpload.clear();
+  } else if (command.action == 'S') {
+    selector.active = false; screenMode = command.mode;
+    if (screenMode <= 1) startNetwork();
+    drawMode(screenMode); present(true); remoteScreenChanged = true;
+  } else if (command.action == 'F') {
+    flipped = !flipped; panel.setRotation(flipped ? 3 : 1);
+    if (selector.active) { selector.changedAt = millis(); drawSelector(millis()); }
+    else drawMode(screenMode);
+    present(false); remoteScreenChanged = true;
+  } else if (command.action == 'N') {
+    if (!currentInitiative.count) error = 1;
+    else {
+      InitiativeState next = currentInitiative;
+      next.current = (next.current + 1) % next.count;
+      if (applyLocalInitiative(next)) replySerialState(0); else error = 2;
+    }
+  }
+  remoteOrder->setValue(encodeInitiative(currentInitiative));
+  remoteCharacteristic->setValue(String(command.id) + " " + screenMode + " " + (flipped ? 1 : 0) +
+    " " + currentInitiative.revision + " " + error);
+}
+
 void checkTimezone() {
   setenv("TZ", TIMEZONE, 1);
   tzset();
@@ -344,6 +383,7 @@ void setup() {
   checkArt();
   checkSelector();
   checkEyes();
+  checkRemote();
   storageHealthy = loadInitiative();
   Serial.println(storageHealthy ? "Local initiative loaded" : "Local initiative storage needs attention");
   currentFeed.count = HEADLINE_COUNT;
@@ -374,6 +414,7 @@ void setup() {
   drawMode(2);
   present(false);
   WiFi.mode(WIFI_OFF);
+  startRemote();
   Serial.println("Startup: initiative; double-click BOOT for screens");
   replySerialState(0);
 }
@@ -382,15 +423,19 @@ void loop() {
   static time_t lastSecond = 0;
   static uint32_t lastRetry = 0;
   static BootButton button;
-  static bool flipped = false;
   static size_t headline = 0;
   static float tickerX = 320;
   static uint32_t lastFrame = 0;
   handleSerial();
+  handleRemote();
   uint32_t nowMs = millis();
+  if (remoteScreenChanged) {
+    remoteScreenChanged = false; lastSecond = -1; tickerX = display.width(); lastFrame = nowMs;
+  }
   const BootButton::Event event = button.update(digitalRead(BOOT_PIN) == LOW, nowMs);
   if (event == BootButton::DoubleClick) {
     selector.open(screenMode, nowMs);
+    openRemoteWindow(nowMs);
   } else if (event == BootButton::Hold) {
     flipped = !flipped; panel.setRotation(flipped ? 3 : 1);
     if (selector.active) selector.changedAt = nowMs;

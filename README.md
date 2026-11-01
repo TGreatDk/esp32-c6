@@ -41,6 +41,27 @@ The board starts in Initiative. Clock and News enable Wi-Fi for the rest of that
 Initiative, artwork, and blinking eyes need no network.
 Holding BOOT before power-on or during reset can enter the flashing mode.
 
+## Bluetooth remote
+
+Open https://hexadome-news.tgreatdk.chatgpt.site/remote in Chrome on Android,
+Windows, or macOS with Bluetooth enabled. Double-click BOOT, then click
+**Connect by Bluetooth** within 60 seconds and select **Tabletop ESP32**.
+The selector may close after five seconds; the connection window still lasts
+60 seconds. Nearby devices can connect during this window. One remote is allowed
+at a time; reconnecting requires another double-click. This is local BLE control,
+not a Wi-Fi hotspot, so your phone or computer keeps its internet connection.
+
+Choose Clock, News, Initiative, Pixel Art, or Eyes, advance the initiative turn,
+or flip the display. The board acknowledges each action after applying it.
+Edit up to 16 players on the remote page and save their order over Bluetooth,
+or click a saved name to make it the current turn. Saving a list selects its first
+player. List uploads use acknowledged packets of at most 20 bytes and are only
+committed after complete validation. Interrupted uploads keep the saved order.
+Artwork configuration continues to use USB. Gameplay, validation,
+and persistence stay on the board. The remote does not use the site's APIs.
+Safari and iPhone/iPad Chrome do not provide native Web Bluetooth; they require
+a compatible third-party Web Bluetooth bridge. No native phone app is included.
+
 ## Pixel painter
 
 Open https://hexadome-news.tgreatdk.chatgpt.site/paint in desktop Chrome or Edge.

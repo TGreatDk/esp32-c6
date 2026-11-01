@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "ESP32 Tabletop Companion",
-  description: "Configure initiative and pixel art directly on your ESP32 over USB.",
+  description: "Configure initiative and pixel art over USB and control your ESP32 screens by Bluetooth.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",
