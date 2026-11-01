@@ -7,7 +7,7 @@
 #if __has_include("secrets.h")
 #include "secrets.h"
 #else
-#error "Copy secrets.example.h to secrets.h and enter your Wi-Fi credentials."
+#include "secrets.example.h"
 #endif
 #include "headline_feed.h"
 #include "name_layout.h"
@@ -15,6 +15,8 @@
 constexpr char TIMEZONE[] = "CET-1CEST,M3.5.0,M10.5.0/3";
 constexpr uint16_t BACKGROUND = 0x0000;
 constexpr uint16_t FOREGROUND = 0xFFFF;
+uint8_t screenMode = 2;
+bool storageHealthy = true;
 
 // ESP32-C6-LCD-1.47 pinout: DC, CS, SCK, MOSI.
 Arduino_HWSPI bus(15, 14, 7, 6);
@@ -114,8 +116,7 @@ void drawInitiative() {
   } else {
     drawName("Set order on website", 0, 172, 3, FOREGROUND);
   }
-  // A small amber dot marks cached turns when synchronization is unavailable.
-  if (!lastInitiativeUpdate || millis() - lastInitiativeUpdate > 10000) display.fillCircle(312, 8, 3, 0xFD20);
+  if (!storageHealthy) display.fillCircle(312, 8, 3, 0xFD20);
 }
 
 void scrollInitiative(const InitiativeState &previous) {
@@ -141,6 +142,79 @@ void scrollInitiative(const InitiativeState &previous) {
   }
   drawInitiative();
   present(false);
+}
+
+bool applyLocalInitiative(InitiativeState next) {
+  next.revision = currentInitiative.revision + 1;
+  storageHealthy = saveInitiative(next);
+  if (!storageHealthy) {
+    if (screenMode == 2) { drawInitiative(); present(false); }
+    return false;
+  }
+  const InitiativeState previous = currentInitiative;
+  currentInitiative = next;
+  if (screenMode == 2) scrollInitiative(previous);
+  return true;
+}
+
+void replySerialState(uint32_t id) {
+  const String body = encodeInitiative(currentInitiative);
+  Serial.print(String("DND ") + id + " STATE " + body.length() + "\n" + body);
+}
+
+void replySerialError(uint32_t id, const char *error) {
+  Serial.printf("DND %u ERROR %s\n", id, error);
+}
+
+void handleSerial() {
+  static String line, payload;
+  static bool overflow = false;
+  static unsigned expected = 0, requestId = 0;
+  static uint32_t started = 0;
+  if (expected && millis() - started > 5000) {
+    expected = 0; payload = "";
+    replySerialError(requestId, "Configuration timed out; nothing changed");
+  }
+  while (Serial.available()) {
+    const char value = Serial.read();
+    if (expected) {
+      payload += value;
+      if (payload.length() == expected) {
+        expected = 0;
+        InitiativeState next;
+        if (!parseInitiative(payload, next) || !next.count) replySerialError(requestId, "Invalid player list; nothing changed");
+        else if (!applyLocalInitiative(next)) replySerialError(requestId, "Could not save configuration");
+        else replySerialState(requestId);
+        payload = "";
+      }
+    } else if (value == '\n') {
+      if (overflow) replySerialError(0, "Command too long");
+      else if (line.startsWith("DND ")) {
+        char command[8] = {}, extra;
+        unsigned length = 0;
+        requestId = 0;
+        const int fields = sscanf(line.c_str(), "DND %u %7s %u %c", &requestId, command, &length, &extra);
+        if (requestId == 0 || requestId > 2147483647u) replySerialError(0, "Invalid request ID");
+        else if (fields == 2 && line == String("DND ") + requestId + " GET") replySerialState(requestId);
+        else if (fields == 2 && line == String("DND ") + requestId + " NEXT") {
+          if (!currentInitiative.count) replySerialError(requestId, "Configure players first");
+          else {
+            InitiativeState next = currentInitiative;
+            next.current = (next.current + 1) % next.count;
+            if (applyLocalInitiative(next)) replySerialState(requestId);
+            else replySerialError(requestId, "Could not save turn");
+          }
+        } else if (fields == 3 && strcmp(command, "SET") == 0 && length > 0 && length <= 512 &&
+                   line == String("DND ") + requestId + " SET " + length) {
+          expected = length; started = millis(); payload = "";
+        } else replySerialError(requestId, "Invalid command");
+      }
+      line = ""; overflow = false;
+    } else if (value != '\r' && !overflow) {
+      if (line.length() >= 96) { line = ""; overflow = true; }
+      else line += value;
+    }
+  }
 }
 
 void drawClock() {
@@ -206,12 +280,15 @@ void checkTimezone() {
 }
 
 void setup() {
+  Serial.setRxBufferSize(1024);
   Serial.begin(115200);
   checkTimezone();
   checkButton();
   checkFeed();
   checkInitiative();
   checkNameLayout();
+  storageHealthy = loadInitiative();
+  Serial.println(storageHealthy ? "Local initiative loaded" : "Local initiative storage needs attention");
   currentFeed.count = HEADLINE_COUNT;
   for (size_t i = 0; i < HEADLINE_COUNT; ++i) strcpy(currentFeed.headlines[i], HEADLINES[i]);
   pinMode(BOOT_PIN, INPUT_PULLUP);
@@ -249,48 +326,44 @@ void setup() {
     } else heldSince = 0;
     delay(5);
   }
-  if (extraModesEnabled) { drawMode(0); present(false); }
+  if (extraModesEnabled) { screenMode = 0; drawMode(0); present(false); }
   while (digitalRead(BOOT_PIN) == LOW) delay(5);
   Serial.println(extraModesEnabled ? "Startup profile: all screens" : "Startup profile: D&D only");
-  WiFi.persistent(false);
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  configTzTime(TIMEZONE, "pool.ntp.org", "time.cloudflare.com");
-  feedQueue = xQueueCreate(1, sizeof(HeadlineFeed));
-  initiativeQueue = xQueueCreate(1, sizeof(InitiativeState));
-  nextTurnQueue = xQueueCreate(1, sizeof(uint32_t));
-  nextTurnResultQueue = xQueueCreate(1, sizeof(bool));
-  if (!feedQueue || !initiativeQueue || !nextTurnQueue || !nextTurnResultQueue || xTaskCreate(downloadFeed, "feeds", 12288, nullptr, 1, nullptr) != pdPASS) {
-    Serial.println("Headline downloader initialization failed");
-    while (true) delay(1000);
+  if (extraModesEnabled) {
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    configTzTime(TIMEZONE, "pool.ntp.org", "time.cloudflare.com");
+    feedQueue = xQueueCreate(1, sizeof(HeadlineFeed));
+    if (!feedQueue || xTaskCreate(downloadFeed, "news", 12288, nullptr, 1, nullptr) != pdPASS) {
+      Serial.println("News downloader initialization failed");
+      while (true) delay(1000);
+    }
+  } else {
+    WiFi.mode(WIFI_OFF);
   }
+  replySerialState(0);
 }
 
 void loop() {
   static time_t lastSecond = 0;
   static uint32_t lastRetry = 0;
   static BootButton button;
-  static uint8_t screenMode = extraModesEnabled ? 0 : 2;
-  static bool nextTurnPending = false;
   static bool flipped = false;
   static size_t headline = 0;
   static float tickerX = 320;
   static uint32_t lastFrame = 0;
-  static bool initiativeStale = true;
+  handleSerial();
   const uint32_t nowMs = millis();
-  bool nextTurnSucceeded;
-  if (xQueueReceive(nextTurnResultQueue, &nextTurnSucceeded, 0) == pdPASS) {
-    nextTurnPending = false;
-    if (!nextTurnSucceeded) lastInitiativeUpdate = 0;
-  }
   const BootButton::Event event = button.update(digitalRead(BOOT_PIN) == LOW, nowMs);
   if (event == BootButton::Click && !extraModesEnabled) {
-    if (!nextTurnPending && currentInitiative.count && lastInitiativeUpdate && nowMs - lastInitiativeUpdate <= 10000 &&
-        WiFi.status() == WL_CONNECTED && xQueueSend(nextTurnQueue, &currentInitiative.revision, 0) == pdPASS) {
-      nextTurnPending = true;
-      Serial.println("BOOT next-turn request queued");
-    } else Serial.println("BOOT next-turn ignored: waiting for a fresh turn or pending request");
+    if (currentInitiative.count) {
+      InitiativeState next = currentInitiative;
+      next.current = (next.current + 1) % next.count;
+      if (applyLocalInitiative(next)) replySerialState(0);
+      else replySerialError(0, "Could not save turn");
+    } else replySerialError(0, "Configure players first");
   } else if (event != BootButton::None) {
     if (event == BootButton::Hold) {
       flipped = !flipped;
@@ -306,22 +379,9 @@ void loop() {
     lastFrame = nowMs;
     Serial.println(screenMode == 2 ? "Mode: D&D initiative" : screenMode == 1 ? "Mode: Aristeia! news" : "Mode: clock");
   }
-  InitiativeState incomingTurn;
-  if (xQueueReceive(initiativeQueue, &incomingTurn, 0) == pdPASS) {
-    const bool changed = incomingTurn.current != currentInitiative.current || incomingTurn.count != currentInitiative.count ||
-      incomingTurn.revision != currentInitiative.revision || memcmp(incomingTurn.names, currentInitiative.names, sizeof(incomingTurn.names)) != 0;
-    if (!lastInitiativeUpdate) Serial.println("Initiative feed connected");
-    lastInitiativeUpdate = nowMs;
-    if (changed) {
-      const InitiativeState previous = currentInitiative;
-      currentInitiative = incomingTurn;
-      if (screenMode == 2) scrollInitiative(previous);
-      Serial.printf("Initiative: %s\n", currentInitiative.count ? currentInitiative.names[currentInitiative.current] : "No turn order");
-    }
-  }
 
   HeadlineFeed incoming;
-  if (xQueueReceive(feedQueue, &incoming, 0) == pdPASS) {
+  if (feedQueue && xQueueReceive(feedQueue, &incoming, 0) == pdPASS) {
     bool changed = incoming.speed != currentFeed.speed || incoming.color != currentFeed.color ||
       incoming.count != currentFeed.count || memcmp(incoming.headlines, currentFeed.headlines, sizeof(incoming.headlines)) != 0;
     currentFeed = incoming;
@@ -331,14 +391,12 @@ void loop() {
       ticker.setTextColor(currentFeed.color, BACKGROUND);
     }
   }
-  if (WiFi.status() != WL_CONNECTED && nowMs - lastRetry >= 30000) {
+  if (extraModesEnabled && WiFi.status() != WL_CONNECTED && nowMs - lastRetry >= 30000) {
     lastRetry = nowMs;
     WiFi.reconnect();
   }
 
   if (screenMode == 2) {
-    const bool stale = !lastInitiativeUpdate || nowMs - lastInitiativeUpdate > 10000;
-    if (stale != initiativeStale) { initiativeStale = stale; drawInitiative(); present(false); }
     delay(20);
     return;
   }
