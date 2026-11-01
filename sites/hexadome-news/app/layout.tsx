@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HexaDome News | Broadcast desk",
-  description: "Your Aristeia! headlines, live on your tabletop ticker.",
+  title: "ESP32 Tabletop Companion",
+  description: "Configure initiative and pixel art directly on your ESP32 over USB.",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

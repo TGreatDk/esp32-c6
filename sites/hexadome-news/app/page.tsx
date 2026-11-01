@@ -37,7 +37,7 @@ export default function Home() {
     finally { setBusy(false); }
   }
   return <main>
-    <header><a className="brand" href="/"><span className="hex">H</span> HEXADOME <span className="brand-light">/ NEWS</span></a><nav className="mode-nav"><a href="/" aria-current="page">News ticker</a><a href="/initiative">Initiative</a></nav></header>
+    <header><a className="brand" href="/"><span className="hex">H</span> HEXADOME <span className="brand-light">/ NEWS</span></a><nav className="mode-nav"><a href="/" aria-current="page">News</a><a href="/paint">Paint</a><a href="/initiative">Initiative</a></nav></header>
     <section className="intro"><div className="eyebrow"><span className="dot" /> ARISTEIA! // SPORTS NETWORK</div><h1>The arena never<br /><em>stops talking.</em></h1><p>Write the headlines. Set the scene.<br />Bring the HexaDome to your gaming table.</p></section>
     <div className="workspace"><section className="editor panel" aria-labelledby="editor-title">
       <div className="panel-top"><h2 id="editor-title">Broadcast queue</h2><span className={dirty ? "status draft" : "status"}>{dirty ? "UNPUBLISHED CHANGES" : "SAVED FEED"}</span></div>
@@ -51,7 +51,7 @@ export default function Home() {
       <section className="panel preview"><div className="panel-top"><h2>On your tabletop</h2><span className="mini-label">PREVIEW</span></div>
         <div className="device" aria-label="320 by 172 pixel landscape display preview"><div className="device-head"><strong>ARISTEIA! NEWS</strong></div><div className="ticker-window"><div className="marquee" style={{ color, animationDuration: `${(previewHeadline.length * 18 + 320) / speed}s` }} key={`${previewIndex}-${previewHeadline}-${speed}`} onAnimationEnd={() => setPreviewIndex((index) => index + 1)}>{previewHeadline}</div></div><div className="device-footer">HEXADOME // SIMULATED SPORTS FEED</div></div>
         <p className="caption">320 × 172 px · landscape · actual screen pixels.<br />Draft preview, one headline at a time. Send to ESP32 to apply.</p></section>
-      <section className="connection"><span className="step">01</span><div><h3>Press BOOT to change screens</h3><p>Tap the physical BOOT button to cycle through clock, news ticker, and D&D initiative.</p></div></section>
+      <section className="connection"><span className="step">01</span><div><h3>Press BOOT to change screens</h3><p>When unlocked at startup, short presses cycle clock, news, pixel art, and initiative. Double-click to toggle your image directly.</p></div></section>
       <section className="connection"><span className="step">02</span><div><h3>Your feed stays on air</h3><p>If Wi-Fi drops, the device keeps its last downloaded headlines. Built-in news is ready after a restart.</p></div></section>
       <p className="saved">{updated ? `LAST PUBLISHED ${new Date(updated).toLocaleString()}` : "STARTER HEADLINES READY"}</p>
     </aside></div><footer>FAN-MADE BROADCAST TOOL <span>FICTIONAL NEWS. REAL TABLETOP ATMOSPHERE.</span></footer>

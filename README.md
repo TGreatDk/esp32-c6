@@ -26,6 +26,8 @@ it to select that entry. Physical BOOT presses update the connected preview too.
 ## Board controls
 
 - Short BOOT press: advance to the next combatant, wrapping after the last.
+- Double-click BOOT: toggle the saved pixel image and return to the previous screen.
+  Single clicks wait about 350 ms so a double-click does not also advance initiative.
 - Hold BOOT for one second: rotate the whole display 180 degrees without advancing.
 - The current name uses the upper 60% of the screen; the next name uses the lower
   40%. Long names wrap and resize. Turn changes scroll upward.
@@ -35,9 +37,34 @@ it to select that entry. Physical BOOT presses update the connected preview too.
 
 Clock and Aristeia! news code remain behind a startup unlock. Hold BOOT for at
 least 300 ms as the screen lights up, within its 1.8-second startup window, then
-release. Short presses then cycle clock, news, and initiative for that run.
+release. Short presses then cycle clock, news, pixel art, and initiative for that run.
 Holding BOOT before power-on or during reset can enter the chip's flashing mode.
 Only this unlocked mode starts Wi-Fi, NTP, and the optional news download.
+
+## Pixel painter
+
+Open https://hexadome-news.tgreatdk.chatgpt.site/paint in desktop Chrome or Edge.
+Use **Load image** to import a PNG, JPEG, WebP, GIF, or BMP (up to 10 MB and
+20 megapixels). The browser preserves its proportions, fits it into 320 × 172,
+adds black borders when needed, and converts it into the display's RGB565 colours.
+The image file never goes to a server. You can edit individual pixels before saving.
+
+The canvas contains exactly 320 × 172 logical pixels. Choose a colour, click or
+drag to paint, and zoom to 4× or 8× for individual grid cells. Keyboard users can
+select X/Y coordinates and use **Paint selected pixel**, or focus the canvas and
+use arrow keys plus Space. Fill and clear operate on the local draft.
+
+Connect over Web Serial, then click **Save image to ESP32**. The upload uses the
+same USB connection as initiative, with an acknowledgement after every 512-byte
+chunk. The board validates the complete 110,080-byte RGB565 image and its CRC32,
+then atomically replaces the saved file. An interrupted or corrupt upload keeps
+the previous image. The saved image uses the full display and is shown after
+upload; double-click BOOT to leave it or open it again. Initiative remains intact.
+
+Artwork is stored in the board's LittleFS flash partition separately from the
+initiative order. The unused filesystem is initialized once on first use; later
+mount failures do not trigger an automatic format. The editor is a local draft:
+it does not download the saved image back into the canvas when reconnecting.
 
 ## Firmware build and flash
 
@@ -70,6 +97,10 @@ DND <id> GET
 DND <id> NEXT
 DND <id> SET <length>
 <initiative payload of exactly length bytes>
+DND <id> ARTINFO
+DND <id> ARTBEGIN 110080 <8-digit uppercase CRC32>
+DND <id> ARTPART <byte offset> <length up to 512>
+<binary RGB565 little-endian bytes of exactly length bytes>
 ```
 
 Replies are `DND <id> STATE <length>` followed by the payload, or
@@ -86,6 +117,8 @@ Payloads are capped at 512 bytes. SET validates the entire list before saving;
 its supplied revision is ignored because the board assigns revisions. Invalid,
 oversized, or incomplete requests cannot partially replace the saved order.
 Browser request and firmware receive timeouts handle disconnects safely.
+Image acknowledgements are `DND <id> ART <received bytes> <saved 0/1> <CRC32>`.
+ARTBEGIN and every ARTPART must be acknowledged before sending the next chunk.
 
 ## Web source and checks
 

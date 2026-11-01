@@ -11,11 +11,14 @@
 #endif
 #include "headline_feed.h"
 #include "name_layout.h"
+#include "boot_button.h"
+#include "pixel_art.h"
 
 constexpr char TIMEZONE[] = "CET-1CEST,M3.5.0,M10.5.0/3";
 constexpr uint16_t BACKGROUND = 0x0000;
 constexpr uint16_t FOREGROUND = 0xFFFF;
 uint8_t screenMode = 2;
+uint8_t artReturnMode = 2;
 bool storageHealthy = true;
 
 // ESP32-C6-LCD-1.47 pinout: DC, CS, SCK, MOSI.
@@ -36,57 +39,6 @@ constexpr const char *HEADLINES[] = {
 };
 constexpr size_t HEADLINE_COUNT = sizeof(HEADLINES) / sizeof(HEADLINES[0]);
 
-struct BootButton {
-  enum Event { None, Click, Hold };
-  bool previous = false;
-  bool stable = false;
-  bool held = false;
-  uint32_t changedAt = 0;
-  uint32_t pressedAt = 0;
-
-  Event update(bool pressed, uint32_t now) {
-    if (pressed != previous) {
-      previous = pressed;
-      changedAt = now;
-    }
-    if (pressed != stable && now - changedAt >= 35) {
-      stable = pressed;
-      if (pressed) { pressedAt = changedAt; held = false; }
-      else if (!held) return changedAt - pressedAt >= 1000 ? Hold : Click;
-    }
-    if (stable && pressed && !held && now - pressedAt >= 1000) {
-      held = true;
-      return Hold;
-    }
-    return None;
-  }
-};
-
-void checkButton() {
-  BootButton button;
-  assert(!button.update(true, 10));
-  assert(!button.update(false, 20));
-  assert(!button.update(true, 25));
-  assert(!button.update(true, 59));
-  assert(!button.update(true, 60));
-  assert(!button.update(true, 500));
-  assert(!button.update(false, 510));
-  assert(button.update(false, 545) == BootButton::Click);
-  assert(!button.update(false, 700));
-  BootButton hold;
-  assert(!hold.update(true, 100));
-  assert(!hold.update(true, 135));
-  assert(!hold.update(true, 1099));
-  assert(hold.update(true, 1100) == BootButton::Hold);
-  assert(!hold.update(true, 3000));
-  assert(!hold.update(false, 3010));
-  assert(!hold.update(false, 3045));  // Releasing a hold must not change mode.
-  BootButton rollover;
-  assert(!rollover.update(true, 0xFFFFFFF0u));
-  assert(!rollover.update(true, 20));
-  assert(rollover.update(true, 984) == BootButton::Hold);
-}
-
 void present(bool animate) {
   if (!animate) { display.flush(); return; }
   // Reveal the completed frame over the old one without a black intermediate frame.
@@ -105,6 +57,23 @@ void drawName(const char *name, int top, int height, uint8_t maximumSize, uint16
     display.setCursor((320 - layout.lines[i].length() * 6 * layout.size) / 2, startY + i * 8 * layout.size);
     display.print(layout.lines[i]);
   }
+}
+
+void drawArt() {
+  display.fillScreen(BACKGROUND);
+  if (mountArt()) {
+    File image = LittleFS.open("/art.rgb", "r");
+    if (image && image.size() == ART_BYTES) {
+      uint16_t row[320];
+      for (int y = 0; y < 172; ++y) {
+        if (image.read(reinterpret_cast<uint8_t *>(row), sizeof(row)) != sizeof(row)) break;
+        display.draw16bitRGBBitmap(0, y, row, 320, 1);
+      }
+      image.close();
+      return;
+    }
+  }
+  drawName("Paint over USB", 0, 172, 3, FOREGROUND);
 }
 
 void drawInitiative() {
@@ -166,21 +135,45 @@ void replySerialError(uint32_t id, const char *error) {
   Serial.printf("DND %u ERROR %s\n", id, error);
 }
 
+void replyArt(uint32_t id, uint32_t received, bool saved, uint32_t crc) {
+  Serial.printf("DND %u ART %u %u %08X\n", id, received, saved ? 1 : 0, crc);
+}
+
 void handleSerial() {
   static String line, payload;
   static bool overflow = false;
   static unsigned expected = 0, requestId = 0;
   static uint32_t started = 0;
+  static bool receivingArt = false, discardArt = false;
+  static uint8_t artPart[512];
+  static unsigned artPartLength = 0;
   if (expected && millis() - started > 5000) {
     expected = 0; payload = "";
+    receivingArt = false; cancelArtUpload();
     replySerialError(requestId, "Configuration timed out; nothing changed");
   }
+  if (artUploading && millis() - artLastActivity > 30000) cancelArtUpload();
   while (Serial.available()) {
     const char value = Serial.read();
     if (expected) {
-      payload += value;
-      if (payload.length() == expected) {
+      if (receivingArt) artPart[artPartLength++] = static_cast<uint8_t>(value);
+      else payload += value;
+      if ((receivingArt ? artPartLength : payload.length()) == expected) {
         expected = 0;
+        if (receivingArt) {
+          receivingArt = false;
+          const char *error = discardArt ? "Invalid image offset; retry the upload" : writeArtPart(artPart, artPartLength);
+          if (error) { cancelArtUpload(); replySerialError(requestId, error); }
+          else {
+            const bool saved = artReceived == ART_BYTES;
+            if (saved) {
+              if (screenMode != 3) artReturnMode = screenMode;
+              screenMode = 3; drawArt(); present(false);
+            }
+            replyArt(requestId, artReceived, saved, artExpectedCrc);
+          }
+          continue;
+        }
         InitiativeState next;
         if (!parseInitiative(payload, next) || !next.count) replySerialError(requestId, "Invalid player list; nothing changed");
         else if (!applyLocalInitiative(next)) replySerialError(requestId, "Could not save configuration");
@@ -190,12 +183,26 @@ void handleSerial() {
     } else if (value == '\n') {
       if (overflow) replySerialError(0, "Command too long");
       else if (line.startsWith("DND ")) {
-        char command[8] = {}, extra;
-        unsigned length = 0;
+        char command[9] = {}, extra;
+        unsigned length = 0, second = 0, crc = 0;
         requestId = 0;
-        const int fields = sscanf(line.c_str(), "DND %u %7s %u %c", &requestId, command, &length, &extra);
+        const int fields = sscanf(line.c_str(), "DND %u %8s %u %u %c", &requestId, command, &length, &second, &extra);
         if (requestId == 0 || requestId > 2147483647u) replySerialError(0, "Invalid request ID");
         else if (fields == 2 && line == String("DND ") + requestId + " GET") replySerialState(requestId);
+        else if (fields == 2 && line == String("DND ") + requestId + " ARTINFO") {
+          uint32_t savedCrc = 0;
+          const bool saved = readArtInfo(savedCrc);
+          replyArt(requestId, saved ? ART_BYTES : 0, saved, saved ? savedCrc : 0);
+        } else if (strcmp(command, "ARTBEGIN") == 0) {
+          const int parsed = sscanf(line.c_str(), "DND %u ARTBEGIN %u %8x %c", &requestId, &length, &crc, &extra);
+          char canonical[96]; snprintf(canonical, sizeof(canonical), "DND %u ARTBEGIN %u %08X", requestId, length, crc);
+          if (parsed != 3 || line != canonical || !beginArtUpload(length, crc)) replySerialError(requestId, "Could not start 320x172 image upload");
+          else replyArt(requestId, 0, false, crc);
+        } else if (fields == 4 && strcmp(command, "ARTPART") == 0 && second > 0 && second <= 512 &&
+                   line == String("DND ") + requestId + " ARTPART " + length + " " + second) {
+          expected = second; started = millis(); artPartLength = 0; receivingArt = true;
+          discardArt = !artUploading || length != artReceived;
+        }
         else if (fields == 2 && line == String("DND ") + requestId + " NEXT") {
           if (!currentInitiative.count) replySerialError(requestId, "Configure players first");
           else {
@@ -245,6 +252,7 @@ void drawClock() {
 }
 
 void drawMode(uint8_t mode) {
+  if (mode == 3) { drawArt(); return; }
   if (mode == 2) { drawInitiative(); return; }
   const bool news = mode == 1;
   display.fillScreen(BACKGROUND);
@@ -287,6 +295,7 @@ void setup() {
   checkFeed();
   checkInitiative();
   checkNameLayout();
+  checkArt();
   storageHealthy = loadInitiative();
   Serial.println(storageHealthy ? "Local initiative loaded" : "Local initiative storage needs attention");
   currentFeed.count = HEADLINE_COUNT;
@@ -357,7 +366,14 @@ void loop() {
   handleSerial();
   const uint32_t nowMs = millis();
   const BootButton::Event event = button.update(digitalRead(BOOT_PIN) == LOW, nowMs);
-  if (event == BootButton::Click && !extraModesEnabled) {
+  if (event == BootButton::DoubleClick) {
+    if (screenMode == 3) screenMode = artReturnMode;
+    else { artReturnMode = screenMode; screenMode = 3; }
+    drawMode(screenMode); present(true);
+    lastSecond = -1; tickerX = display.width(); lastFrame = nowMs;
+    Serial.println(screenMode == 3 ? "Mode: pixel art" : "Mode: returned from pixel art");
+  } else if (event == BootButton::Click && !extraModesEnabled) {
+    if (screenMode != 2) return;
     if (currentInitiative.count) {
       InitiativeState next = currentInitiative;
       next.current = (next.current + 1) % next.count;
@@ -370,14 +386,14 @@ void loop() {
       panel.setRotation(flipped ? 3 : 1);
       Serial.println(flipped ? "Orientation: flipped 180 degrees" : "Orientation: normal");
     } else {
-      screenMode = (screenMode + 1) % 3;
+      screenMode = screenMode == 0 ? 1 : screenMode == 1 ? 3 : screenMode == 3 ? 2 : 0;
     }
     drawMode(screenMode);
     present(true);
     lastSecond = -1;
     tickerX = display.width();
     lastFrame = nowMs;
-    Serial.println(screenMode == 2 ? "Mode: D&D initiative" : screenMode == 1 ? "Mode: Aristeia! news" : "Mode: clock");
+    Serial.println(screenMode == 3 ? "Mode: pixel art" : screenMode == 2 ? "Mode: D&D initiative" : screenMode == 1 ? "Mode: Aristeia! news" : "Mode: clock");
   }
 
   HeadlineFeed incoming;
@@ -396,7 +412,7 @@ void loop() {
     WiFi.reconnect();
   }
 
-  if (screenMode == 2) {
+  if (screenMode == 2 || screenMode == 3) {
     delay(20);
     return;
   }
@@ -428,4 +444,5 @@ void loop() {
   }
   delay(5);
 }
+
 

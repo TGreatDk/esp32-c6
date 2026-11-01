@@ -1,4 +1,5 @@
 import { validateNames, initiativeFeed } from "./initiative.mjs";
+import { crc32, encodePixels } from "./pixel-art.mjs";
 
 export function parseBoardState(body) {
   const match = /^INITIATIVE\/2 (\d+) (\d+)\n/.exec(body);
@@ -11,7 +12,7 @@ export function parseBoardState(body) {
   return { names, current, revision };
 }
 
-export function createFrameDecoder(onState, onError) {
+export function createFrameDecoder(onState, onError, onArt = () => {}) {
   let buffer = "", frame = null;
   return (chunk) => {
     buffer += chunk;
@@ -31,8 +32,10 @@ export function createFrameDecoder(onState, onError) {
         if (!line.startsWith("DND ")) continue;
         const state = /^DND (\d+) STATE (\d+)$/.exec(line);
         const error = /^DND (\d+) ERROR (.+)$/.exec(line);
+        const art = /^DND (\d+) ART (\d+) ([01]) ([0-9A-F]{8})$/.exec(line);
         if (state && Number(state[2]) > 0 && Number(state[2]) <= 512) frame = { id: Number(state[1]), length: Number(state[2]) };
         else if (error) onError(Number(error[1]), error[2]);
+        else if (art && Number(art[2]) <= 110080) onArt(Number(art[1]), { received: Number(art[2]), saved: art[3] === "1", crc: art[4] });
         else throw new Error("Invalid device response.");
       }
     }
@@ -55,7 +58,7 @@ export function createDndSerial({ onState, onError, onDisconnect }) {
     const text = new TextDecoder();
     const decode = createFrameDecoder((id, state) => { onState(state); finish(id, state); }, (id, error) => {
       if (id) finish(id, null, new Error(error)); else onError(error);
-    });
+    }, (id, state) => finish(id, state));
     try {
       reader = active.readable.getReader();
       for (;;) {
@@ -78,7 +81,10 @@ export function createDndSerial({ onState, onError, onDisconnect }) {
     const active = port;
     if (!active?.writable || closing) return Promise.reject(new Error("Connect your ESP32 by USB first."));
     const id = ++sequence;
-    const frame = new TextEncoder().encode(`DND ${id} ${command}\n${body}`);
+    const header = new TextEncoder().encode(`DND ${id} ${command}\n`);
+    const payload = typeof body === "string" ? new TextEncoder().encode(body) : body;
+    const frame = new Uint8Array(header.length + payload.length);
+    frame.set(header); frame.set(payload, header.length);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => finish(id, null, new Error("The device did not respond. Check its firmware and USB connection.")), 12000);
       pending.set(id, { resolve, reject, timer });
@@ -110,6 +116,18 @@ export function createDndSerial({ onState, onError, onDisconnect }) {
     disconnect,
     get: () => request("GET"),
     next: () => request("NEXT"),
+    artInfo: () => request("ARTINFO"),
+    async sendArt(pixels, onProgress = (progress) => {}) {
+      const bytes = encodePixels(pixels), checksum = crc32(bytes);
+      await request(`ARTBEGIN ${bytes.length} ${checksum}`);
+      for (let offset = 0; offset < bytes.length; offset += 512) {
+        const chunk = bytes.subarray(offset, Math.min(offset + 512, bytes.length));
+        const reply = await request(`ARTPART ${offset} ${chunk.length}`, chunk);
+        if (reply.received !== offset + chunk.length || reply.crc !== checksum) throw new Error("Image upload lost synchronization. Retry the upload.");
+        if (offset + chunk.length === bytes.length && !reply.saved) throw new Error("The board did not save the image.");
+        onProgress(Math.round((offset + chunk.length) * 100 / bytes.length));
+      }
+    },
     set(names, current = 0) {
       const checked = validateNames(names);
       if (!Number.isInteger(current) || current < 0 || current >= checked.length) return Promise.reject(new Error("Select a valid player."));

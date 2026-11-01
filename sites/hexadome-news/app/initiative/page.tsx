@@ -52,7 +52,7 @@ export default function Initiative() {
     finally { setBusy(false); }
   }
   return <main className="initiative">
-    <header><a className="brand" href="/initiative"><span className="hex">D</span> D&D <span className="brand-light">/ INITIATIVE</span></a><nav className="mode-nav"><a href="/">News ticker</a><a href="/initiative" aria-current="page">Initiative</a></nav></header>
+    <header><a className="brand" href="/initiative"><span className="hex">D</span> D&D <span className="brand-light">/ INITIATIVE</span></a><nav className="mode-nav"><a href="/">News</a><a href="/paint">Paint</a><a href="/initiative" aria-current="page">Initiative</a></nav></header>
     <section className="intro"><div className="eyebrow"><span className="dot" /> THE GAME MASTER'S DESK</div><h1>Every hero gets<br /><em>their moment.</em></h1><p>Connect by USB. Set the order.<br />Unplug and play entirely on the board.</p></section>
     <div className="workspace"><section className="panel editor">
       <div className="panel-top"><h2>Turn order</h2><span className="status">{connected ? "USB CONNECTED" : "USB DISCONNECTED"}</span></div>
@@ -66,7 +66,7 @@ export default function Initiative() {
       <InitiativePreview current={current} next={next} />
       <div className="turn-control"><button className="next-button" disabled={!connected || busy || !current || dirty} onClick={() => send("next")}>Next turn →</button><p>{dirty ? "Save your edited order before advancing." : "The ESP32 advances the turn and loops the order. Works with BOOT when unplugged."}</p></div></section>
       {order.names.length > 0 && <ol className="turn-list">{order.names.map((name, index) => <li key={index}><button disabled={!connected || busy || dirty} onClick={() => send("select", index)} aria-current={index === order.current ? "step" : undefined}><span>{String(index + 1).padStart(2, "0")}</span>{name}{index === order.current && <strong>NOW</strong>}</button></li>)}</ol>}
-      <p className="caption">D&D-only mode: tap BOOT for the next turn; hold to flip.<br />Hold BOOT as the screen lights up to unlock the other screens.<br />While connected, click a saved name to select it on the board.</p>
+      <p className="caption">Tap BOOT for the next turn; double-click for your painted image.<br />Hold to flip the display. While connected, click a saved name to select it.</p>
     </aside></div><footer>TABLETOP COMPANION <span>YOUR PARTY. YOUR TURN ORDER.</span></footer>
   </main>;
 }
